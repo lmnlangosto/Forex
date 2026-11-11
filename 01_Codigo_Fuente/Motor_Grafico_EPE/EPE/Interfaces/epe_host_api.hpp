@@ -1,23 +1,26 @@
 #pragma once
-// Interfaz de integración · mismo Core bajo TestHost, BlindRuntime o anfitrión de aplicación.
-// Materializa Doc_4 (Init → OpenChannel → Frame → Recover → Shutdown).
 #include "epe_status.hpp"
+#include "../../Public/epe_doc6_profile.h"
 #include <cstdint>
+#include <string>
 
 namespace epe {
 
 struct HostConfig {
-  void* hwnd = nullptr;  // HWND Windows; nullptr permitido con headless=true
+  void* hwnd = nullptr;
   std::uint32_t width = 1280;
   std::uint32_t height = 720;
   const wchar_t* channel_map_name = nullptr;
-  const char* channel_map_name_utf8 = nullptr;  // preferido en runtime ciego
+  const char* channel_map_name_utf8 = nullptr;
   std::uint64_t session_id = 1;
   std::uint32_t layout_version = 1;
   bool create_channel = true;
-  bool enable_present_throttle = true;  // Doc_5 §5
-  bool headless = false;                // fuerza NullSurface (Doc_4 ciclo sin GPU)
+  bool enable_present_throttle = true;
+  bool headless = false;
   float clear_rgba[4] = {0.07f, 0.09f, 0.12f, 1.0f};
+  EpeDoc6Profile doc6_profile{};  // MATERIALIZACIÓN Doc_6 §4.4
+  bool doc6_profile_set = false;
+  std::string proof_ppm_path;  // si no vacío, escribe PPM en cada Present (ensayo)
 };
 
 struct FrameStats {
@@ -26,6 +29,8 @@ struct FrameStats {
   std::uint64_t omitted_presents = 0;
   std::uint64_t snapshots_ok = 0;
   std::uint64_t last_generation = 0;
+  std::uint32_t paint_nonzero_pixels = 0;
+  std::uint64_t paint_checksum = 0;
 };
 
 class IEngine {
@@ -38,6 +43,8 @@ class IEngine {
   virtual Status Shutdown() = 0;
   virtual FrameStats Stats() const = 0;
   virtual Status LastStatus() const = 0;
+  virtual Status SetDoc6Profile(const EpeDoc6Profile& profile) = 0;
+  virtual Status WriteProofPpm(const char* path) = 0;
 };
 
 IEngine* CreateEngine();

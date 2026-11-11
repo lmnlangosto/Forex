@@ -1,9 +1,9 @@
 #pragma once
+#include "../../Public/epe_doc6_profile.h"
 #include <cstdint>
 #include <fstream>
 #include <sstream>
 #include <string>
-#include <unordered_map>
 
 namespace epe {
 namespace blind {
@@ -20,10 +20,13 @@ struct Config {
   int control_port = 17900;
   std::string orders_dir;
   std::string status_dir;
+  std::string proof_dir = ".";
   bool headless = true;
   bool enable_control_socket = true;
   bool self_test = false;
   std::uint32_t auto_tick_ms = 0;
+  EpeDoc6Profile doc6{};
+  bool doc6_set = false;
 };
 
 inline std::string Trim(std::string s) {
@@ -34,9 +37,39 @@ inline std::string Trim(std::string s) {
   return s.substr(i);
 }
 
+inline bool ParseBool(const std::string& v) {
+  return v == "1" || v == "true" || v == "yes";
+}
+
+// Campos Doc_6 §4.4 por nombre normativo (materialización; no API inventada).
+inline bool ApplyDoc6Key(EpeDoc6Profile& p, const std::string& k, const std::string& v) {
+  if (k == "saturation") p.saturation = std::stof(v);
+  else if (k == "contrast") p.contrast = std::stof(v);
+  else if (k == "gamma") p.gamma = std::stof(v);
+  else if (k == "black_point") p.black_point = std::stof(v);
+  else if (k == "white_point") p.white_point = std::stof(v);
+  else if (k == "exposure") p.exposure = std::stof(v);
+  else if (k == "opacity_default") p.opacity_default = std::stof(v);
+  else if (k == "dither_enable") p.dither_enable = ParseBool(v) ? 1u : 0u;
+  else if (k == "aa_primitives") p.aa_primitives = ParseBool(v) ? 1u : 0u;
+  else if (k == "lut_id") p.lut_id = static_cast<std::uint32_t>(std::stoul(v));
+  else if (k == "color_gain_r") p.color_gain_rgb[0] = std::stof(v);
+  else if (k == "color_gain_g") p.color_gain_rgb[1] = std::stof(v);
+  else if (k == "color_gain_b") p.color_gain_rgb[2] = std::stof(v);
+  else if (k == "offset_r") p.offset[0] = std::stof(v);
+  else if (k == "offset_g") p.offset[1] = std::stof(v);
+  else if (k == "offset_b") p.offset[2] = std::stof(v);
+  else return false;
+  return true;
+}
+
 inline bool LoadConfigFile(const std::string& path, Config& out) {
   std::ifstream in(path);
   if (!in) return false;
+  if (!out.doc6_set) {
+    EpeDoc6ProfileIdentity(&out.doc6);
+    out.doc6_set = true;
+  }
   std::string line;
   while (std::getline(in, line)) {
     line = Trim(line);
@@ -58,11 +91,12 @@ inline bool LoadConfigFile(const std::string& path, Config& out) {
     else if (k == "control_port") out.control_port = std::stoi(v);
     else if (k == "orders_dir") out.orders_dir = v;
     else if (k == "status_dir") out.status_dir = v;
-    else if (k == "headless") out.headless = (v == "1" || v == "true" || v == "yes");
-    else if (k == "enable_control_socket")
-      out.enable_control_socket = (v == "1" || v == "true" || v == "yes");
-    else if (k == "self_test") out.self_test = (v == "1" || v == "true" || v == "yes");
+    else if (k == "proof_dir") out.proof_dir = v;
+    else if (k == "headless") out.headless = ParseBool(v);
+    else if (k == "enable_control_socket") out.enable_control_socket = ParseBool(v);
+    else if (k == "self_test") out.self_test = ParseBool(v);
     else if (k == "auto_tick_ms") out.auto_tick_ms = static_cast<std::uint32_t>(std::stoul(v));
+    else if (ApplyDoc6Key(out.doc6, k, v)) { /* Doc_6 §4.4 */ }
   }
   return true;
 }

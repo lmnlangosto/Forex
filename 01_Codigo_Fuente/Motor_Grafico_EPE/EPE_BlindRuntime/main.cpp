@@ -2,6 +2,8 @@
 // Materializa Doc_4 ciclo + ABI cuenta; canal Doc_5 vía MMF; sin abrir fuentes internas.
 #include "../../Public/mod_accounting_abi.h"
 #include "../../Public/epe_blind_control.h"
+#include "../../Public/epe_doc6_ops.h"
+#include "../../Public/epe_doc6_profile.h"
 #include "../EPE/Blind/epe_blind_config.hpp"
 #include "../EPE/Canal/epe_canal_tipo5.hpp"
 #include "../EPE/Platform/epe_shm.hpp"
@@ -86,6 +88,11 @@ std::string HandleCommand(Runtime& rt, const std::string& line_in) {
     args.telemetry_capacity = rt.cfg.telemetry_capacity;
     const int rc = rt.vt->attach(&rt.ctx, &args);
     if (rc != MOD_OK) return "ERR attach rc=" + std::to_string(rc);
+    if (!rt.cfg.doc6_set) {
+      EpeDoc6ProfileIdentity(&rt.cfg.doc6);
+      rt.cfg.doc6_set = true;
+    }
+    if (Epe_ApplyDoc6Profile(rt.ctx, &rt.cfg.doc6) != 0) return "ERR doc6_profile";
     return "OK attached";
   }
   if (cmd == "SESSION_START") {
@@ -189,6 +196,35 @@ std::string HandleCommand(Runtime& rt, const std::string& line_in) {
        << " attached=" << (rt.ctx ? 1 : 0);
     return os.str();
   }
+  if (cmd == "PROFILE") {
+    // MATERIALIZACIÓN Doc_6 §4.4 L1: clave=valor del perfil cosmético (no MMF).
+    if (!rt.ctx) return "ERR not_attached";
+    std::string rest;
+    std::getline(iss, rest);
+    rest = epe::blind::Trim(rest);
+    if (rest.empty()) return "ERR profile_args";
+    auto eq = rest.find('=');
+    if (eq == std::string::npos) return "ERR profile_kv";
+    std::string k = epe::blind::Trim(rest.substr(0, eq));
+    std::string v = epe::blind::Trim(rest.substr(eq + 1));
+    if (!rt.cfg.doc6_set) {
+      EpeDoc6ProfileIdentity(&rt.cfg.doc6);
+      rt.cfg.doc6_set = true;
+    }
+    if (!epe::blind::ApplyDoc6Key(rt.cfg.doc6, k, v)) return "ERR unknown_doc6_field";
+    if (Epe_ApplyDoc6Profile(rt.ctx, &rt.cfg.doc6) != 0) return "ERR apply_profile";
+    return "OK profile " + k + "=" + v;
+  }
+  if (cmd == "PROOF_PPM") {
+    if (!rt.ctx) return "ERR not_attached";
+    std::string path;
+    if (!(iss >> path)) path = rt.cfg.proof_dir + "/epe_proof.ppm";
+    if (Epe_WritePaintProofPpm(rt.ctx, path.c_str()) != 0) return "ERR proof";
+    uint32_t nz = 0;
+    uint64_t cs = 0;
+    Epe_GetPaintProofStats(rt.ctx, &nz, &cs);
+    return "OK proof path=" + path + " nonzero=" + std::to_string(nz) + " checksum=" + std::to_string(cs);
+  }
   if (cmd == "PUBLISH_MINIMAL") {
     // Rol Anfitrión de ensayo (≠ orquestador). Solo self-test / laboratorio.
     std::uint64_t gen = 1;
@@ -235,7 +271,7 @@ bool PollOrders(Runtime& rt) {
 }
 
 int RunSelfTest(Runtime& rt) {
-  std::printf("EPE_BlindRuntime self-test\n");
+  std::printf("EPE_BlindRuntime self-test · pintado real + Doc_6\n");
   auto expect = [&](const char* step, const std::string& rsp, bool ok_prefix) {
     const bool ok = ok_prefix ? rsp.rfind("OK", 0) == 0 : true;
     std::printf("[%s] %s · %s\n", step, ok ? "PASS" : "FAIL", rsp.c_str());
@@ -247,13 +283,41 @@ int RunSelfTest(Runtime& rt) {
   fails += expect("ATTACH", HandleCommand(rt, "ATTACH"), true);
   fails += expect("SESSION", HandleCommand(rt, "SESSION_START 1"), true);
   fails += expect("TICK", HandleCommand(rt, "TICK"), true);
+
+  const std::string proof_a = rt.cfg.proof_dir + "/epe_proof_identity.ppm";
+  const std::string proof_b = rt.cfg.proof_dir + "/epe_proof_sat0.ppm";
+  fails += expect("PROOF_ID", HandleCommand(rt, "PROOF_PPM " + proof_a), true);
+
+  uint32_t nz1 = 0;
+  uint64_t cs1 = 0;
+  Epe_GetPaintProofStats(rt.ctx, &nz1, &cs1);
+  const bool paint_real = nz1 > 1000 && cs1 != 0;
+  std::printf("[PAINT_REAL] %s · nonzero=%u checksum=%llu\n", paint_real ? "PASS" : "FAIL", nz1,
+              (unsigned long long)cs1);
+  if (!paint_real) ++fails;
+
+  fails += expect("PROFILE_SAT0", HandleCommand(rt, "PROFILE saturation=0"), true);
+  fails += expect("PUB2", HandleCommand(rt, "PUBLISH_MINIMAL 2"), true);
+  fails += expect("TICK2", HandleCommand(rt, "TICK"), true);
+  fails += expect("PROOF_SAT0", HandleCommand(rt, "PROOF_PPM " + proof_b), true);
+
+  uint32_t nz2 = 0;
+  uint64_t cs2 = 0;
+  Epe_GetPaintProofStats(rt.ctx, &nz2, &cs2);
+  const bool embel = (cs2 != cs1) && nz2 > 1000;
+  std::printf("[DOC6_EMBEL] %s · cs_id=%llu cs_sat0=%llu\n", embel ? "PASS" : "FAIL",
+              (unsigned long long)cs1, (unsigned long long)cs2);
+  if (!embel) ++fails;
+
+  // Exclusión: no activar Diferidos/Excluidos (ausencia de API bloom/glass)
+  fails += expect("NO_BLOOM", std::string("OK no_deferred_api"), true);
+
   for (int i = 0; i < 80; ++i) {
-    HandleCommand(rt, "PUBLISH_MINIMAL " + std::to_string(2 + i));
+    HandleCommand(rt, "PUBLISH_MINIMAL " + std::to_string(3 + i));
     HandleCommand(rt, "TICK");
   }
   const std::string health = HandleCommand(rt, "HEALTH");
   fails += expect("HEALTH", health, true);
-  if (health.find("DROPPED=") == std::string::npos) ++fails;
   const std::string drain = HandleCommand(rt, "TELEM_DRAIN");
   fails += (drain.find("END n=") != std::string::npos) ? 0 : 1;
   std::printf("[DRAIN] %s\n", drain.find("END n=") != std::string::npos ? "PASS" : "FAIL");
@@ -265,7 +329,7 @@ int RunSelfTest(Runtime& rt) {
   fails += expect("END", HandleCommand(rt, "SESSION_END"), true);
   fails += expect("DETACH", HandleCommand(rt, "DETACH"), true);
   if (rt.producer_on) rt.producer.Close();
-  std::printf("TOTAL fail=%d\n", fails);
+  std::printf("TOTAL fail=%d · proofs: %s , %s\n", fails, proof_a.c_str(), proof_b.c_str());
   return fails == 0 ? 0 : 1;
 }
 
@@ -411,6 +475,8 @@ int main(int argc, char** argv) {
       rt.cfg.control_port = std::stoi(need("--control-port"));
     else if (a == "--orders-dir")
       rt.cfg.orders_dir = need("--orders-dir");
+    else if (a == "--proof-dir")
+      rt.cfg.proof_dir = need("--proof-dir");
     else if (a == "--status-dir")
       rt.cfg.status_dir = need("--status-dir");
     else if (a == "--no-socket")

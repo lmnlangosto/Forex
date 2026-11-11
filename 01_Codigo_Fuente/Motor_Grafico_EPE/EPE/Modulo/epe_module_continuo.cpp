@@ -1,4 +1,5 @@
 #include "../../Public/mod_accounting_abi.h"
+#include "../../Public/epe_doc6_ops.h"
 #include "mod_telemetry_ring.hpp"
 #include "epe_host_api.hpp"
 #include "../Platform/epe_atomics.hpp"
@@ -158,4 +159,25 @@ extern "C" const ModAccountingVTable* Mod_EPE_Continuous_VTable(void) {
   static ModAccountingVTable vt{Identity,     Attach,          Detach, SessionStart, SessionEnd,
                                 Health,       TelemetryTryPop, ContinuousTick, DiscreteBurst};
   return &vt;
+}
+
+extern "C" int Epe_ApplyDoc6Profile(void* ctx, const EpeDoc6Profile* profile) {
+  auto* c = static_cast<Ctx*>(ctx);
+  if (!c || !c->eng || !profile) return -1;
+  return c->eng->SetDoc6Profile(*profile) == epe::Status::Ok ? 0 : -2;
+}
+
+extern "C" int Epe_WritePaintProofPpm(void* ctx, const char* path) {
+  auto* c = static_cast<Ctx*>(ctx);
+  if (!c || !c->eng || !path) return -1;
+  return c->eng->WriteProofPpm(path) == epe::Status::Ok ? 0 : -2;
+}
+
+extern "C" int Epe_GetPaintProofStats(void* ctx, uint32_t* nonzero_pixels, uint64_t* checksum) {
+  auto* c = static_cast<Ctx*>(ctx);
+  if (!c || !c->eng) return -1;
+  const auto s = c->eng->Stats();
+  if (nonzero_pixels) *nonzero_pixels = s.paint_nonzero_pixels;
+  if (checksum) *checksum = s.paint_checksum;
+  return 0;
 }

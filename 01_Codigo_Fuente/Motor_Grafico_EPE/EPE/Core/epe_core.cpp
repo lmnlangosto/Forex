@@ -1,5 +1,6 @@
 #include "epe_host_api.hpp"
 #include "epe_canal_tipo5.hpp"
+#include "epe_paint_soft.hpp"
 #include "epe_render_null.hpp"
 #include <vector>
 
@@ -17,14 +18,18 @@ class Engine final : public IEngine {
   Status Init(const HostConfig& cfg) override {
     last_ = Status::Ok;
     cfg_ = cfg;
-    use_null_ = cfg_.headless || cfg_.hwnd == nullptr || !EPE_HAS_D3D12;
-    if (!use_null_) {
+    if (!cfg_.doc6_profile_set) EpeDoc6ProfileIdentity(&cfg_.doc6_profile);
+    // SoftPainter materializa Doc_6 §1.4 + embellecedores (siempre en Núcleo v1 headless/ensayo).
+    last_ = painter_.Init(cfg_.width ? cfg_.width : 1280, cfg_.height ? cfg_.height : 720,
+                          cfg_.doc6_profile);
+    if (last_ != Status::Ok) return last_;
+
+    use_d3d_ = (!cfg_.headless && cfg_.hwnd != nullptr && EPE_HAS_D3D12);
+    if (use_d3d_) {
 #if EPE_HAS_D3D12
       last_ = d3d_.Init(static_cast<HWND>(cfg_.hwnd), cfg_.width, cfg_.height);
-#else
-      last_ = Status::Unsupported;
-#endif
       if (last_ != Status::Ok) return last_;
+#endif
     } else {
       last_ = null_.Init(cfg_.hwnd, cfg_.width ? cfg_.width : 1280, cfg_.height ? cfg_.height : 720);
       if (last_ != Status::Ok) return last_;
@@ -50,13 +55,7 @@ class Engine final : public IEngine {
   }
 
   Status Frame() override {
-    const bool surface_ready = use_null_ ? null_.Ready() :
-#if EPE_HAS_D3D12
-                                            d3d_.Ready();
-#else
-                                            false;
-#endif
-    if (!inited_ || !channel_.IsOpen() || !surface_ready) {
+    if (!inited_ || !channel_.IsOpen() || !painter_.Ready()) {
       last_ = Status::NotReady;
       return last_;
     }
@@ -66,60 +65,72 @@ class Engine final : public IEngine {
     Status st = channel_.ConsumerTakeSnapshot(snap, payload_.data(),
                                               static_cast<std::uint32_t>(payload_.size()));
     bool present = true;
+    std::uint64_t gen = stats_.last_generation;
+    std::uint32_t pay_n = 0;
+    const std::uint8_t* pay = nullptr;
     if (st == Status::Ok) {
       ++stats_.snapshots_ok;
       stats_.last_generation = snap.generation;
+      gen = snap.generation;
+      pay_n = snap.payload_bytes;
+      pay = payload_.data();
       have_accepted_ = true;
     } else if (st == Status::NoNewData) {
       if (cfg_.enable_present_throttle && have_accepted_) {
         present = false;
         ++stats_.omitted_presents;
       }
+      gen = snap.generation ? snap.generation : stats_.last_generation;
     } else {
       last_ = st;
       return last_;
     }
 
-    if (use_null_) {
-      last_ = null_.ClearAndPresent(cfg_.clear_rgba, present);
-    } else {
+    last_ = painter_.PaintAndPresent(gen, pay, pay_n, present);
+    if (last_ == Status::Ok && present) {
+      ++stats_.presents;
+      stats_.paint_nonzero_pixels = painter_.Stats().nonzero_pixels;
+      stats_.paint_checksum = painter_.Stats().rgba_checksum;
+      if (!cfg_.proof_ppm_path.empty()) {
+        painter_.WritePpm(cfg_.proof_ppm_path);
+      }
+      if (use_d3d_) {
 #if EPE_HAS_D3D12
-      last_ = d3d_.ClearAndPresent(cfg_.clear_rgba, present);
-#else
-      last_ = Status::Unsupported;
+        d3d_.ClearAndPresent(cfg_.clear_rgba, true);
 #endif
+      } else {
+        null_.ClearAndPresent(cfg_.clear_rgba, true);
+      }
     }
-    if (last_ == Status::Ok && present) ++stats_.presents;
-    if (last_ == Status::OmittedPresent) last_ = Status::Ok;
+    if (last_ == Status::OmittedPresent) {
+      if (use_d3d_) {
+#if EPE_HAS_D3D12
+        d3d_.ClearAndPresent(cfg_.clear_rgba, false);
+#endif
+      } else {
+        null_.ClearAndPresent(cfg_.clear_rgba, false);
+      }
+      last_ = Status::Ok;
+    }
     return last_;
   }
 
   Status Recover() override {
-    if (!inited_) {
-      last_ = Status::NotReady;
-      return last_;
-    }
-    if (use_null_) {
-      last_ = null_.Recover();
-      return last_;
-    }
-#if EPE_HAS_D3D12
-    last_ = d3d_.Recover();
-    if (last_ != Status::Ok) {
-      last_ = d3d_.Init(static_cast<HWND>(cfg_.hwnd), cfg_.width, cfg_.height);
-    }
-#else
-    last_ = Status::Unsupported;
-#endif
+    if (!inited_) return Status::NotReady;
+    last_ = painter_.Init(cfg_.width, cfg_.height, cfg_.doc6_profile);
     return last_;
   }
 
   Status Shutdown() override {
     channel_.Close();
-    if (use_null_) null_.Shutdown();
+    painter_.Shutdown();
+    if (use_d3d_) {
 #if EPE_HAS_D3D12
-    else d3d_.Shutdown();
+      d3d_.Shutdown();
 #endif
+    } else {
+      null_.Shutdown();
+    }
     inited_ = false;
     have_accepted_ = false;
     last_ = Status::Ok;
@@ -129,9 +140,22 @@ class Engine final : public IEngine {
   FrameStats Stats() const override { return stats_; }
   Status LastStatus() const override { return last_; }
 
+  Status SetDoc6Profile(const EpeDoc6Profile& profile) override {
+    cfg_.doc6_profile = profile;
+    cfg_.doc6_profile_set = true;
+    painter_.SetProfile(profile);
+    return Status::Ok;
+  }
+
+  Status WriteProofPpm(const char* path) override {
+    if (!path) return Status::InvalidArg;
+    return painter_.WritePpm(path);
+  }
+
  private:
   HostConfig cfg_{};
-  bool use_null_ = true;
+  bool use_d3d_ = false;
+  render::SoftPainter painter_{};
   render::NullSurface null_{};
 #if EPE_HAS_D3D12
   render::D3D12Surface d3d_{};

@@ -9,6 +9,8 @@ option(EPE_FORCE_NULL_RENDER "Usar NullSurface aunque exista D3D12" OFF)
 set(EPE_CORE_SOURCES
   EPE/Canal/epe_canal_tipo5.cpp
   EPE/Render/epe_render_null.cpp
+  EPE/Render/epe_paint_soft.cpp
+  EPE/Effects/epe_doc6_chain.cpp
   EPE/Platform/epe_shm.cpp
   EPE/Core/epe_core.cpp
   EPE/Modulo/epe_module_continuo.cpp
@@ -27,6 +29,7 @@ target_include_directories(epe_core PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/EPE/Interfaces
   ${CMAKE_CURRENT_SOURCE_DIR}/EPE/Canal
   ${CMAKE_CURRENT_SOURCE_DIR}/EPE/Render
+  ${CMAKE_CURRENT_SOURCE_DIR}/EPE/Effects
   ${CMAKE_CURRENT_SOURCE_DIR}/EPE/Core
   ${CMAKE_CURRENT_SOURCE_DIR}/EPE/Modulo
   ${CMAKE_CURRENT_SOURCE_DIR}/EPE/Platform
