@@ -1,0 +1,55 @@
+﻿DOSSIER_CODIGO_EPE_Alfa
+fecha_local_Europe_Madrid: 2026-11-10 01:13:02
+
+objetivo
+Primera alfa del Economy Painter Engine (EPE): Core independiente + canal Doc_5 + render D3D12 base + EPE_TestHost (escenarios A–I) + contrato Laboratorio. Fuera de la aplicación definitiva.
+
+novedades_respecto_al_codigo_anterior
+1. No había código EPE C++/D3D12 en el árbol; se crea el producto Motor_Grafico_EPE.
+2. Canal tipo 5 (cabecera 48 B, ranuras A/B, seqlock publish/ack, ACK tras copia privada).
+3. Un solo Core vía CreateEngine; TestHost e IntegrationHost son anfitriones, no motores.
+4. Superficie básica = clear + Present; Present Throttle omite Present sin dato nuevo.
+5. Contrato Lab (vtable) y Lab EPE con catálogo A–I.
+6. No implementa los 50 efectos Doc_6; no mezcla con EA/MT5 pintor.
+Qué no se toca: Experts MQL5, harness HTML cancelado, app definitiva.
+
+inventario
+E:\SD_Laboratorio\Forex\Scaner Autonomo\01_Codigo_Fuente\Motor_Grafico_EPE
+  EPE/Canal, Core, Interfaces, Render
+  EPE_TestHost/main.cpp
+  LABORATORIO/Contrato_Laboratorios, Laboratorios/EPE
+  CMakeLists.txt, README.md
+binario: E:\SD_Laboratorio\Forex\Scaner Autonomo\02_Compilados\Motor_Grafico_EPE\EPE_TestHost.exe
+zip: E:\SD_Laboratorio\Forex\Scaner Autonomo\DESCARGAR_AQUI\Codigo_EPE_Alfa_20261110-011301.zip
+
+compilacion
+MSVC 19.51 / CMake Ninja Release · 0 errors (warnings macro WIN32 limpios en rebuild opcional)
+prueba ejecutada: EPE_TestHost.exe · TOTAL fail=0 (A–I PASS)
+
+ex5_equivalente_binario
+ruta: E:\SD_Laboratorio\Forex\Scaner Autonomo\02_Compilados\Motor_Grafico_EPE\EPE_TestHost.exe
+fecha: 2026-11-10 01:12:18
+tamaño_bytes: 32768
+sha256: 830AA1B5C399E311A71B868E2BCE39DA2498B0702430B7813BBF59B892D701F3
+
+espejos
+DESCARGAR_AQUI + 05_Documentacion\Paquetes_Comprimidos
+02_Compilados\Motor_Grafico_EPE\
+
+como_probar
+1. Abrir Developer Command Prompt x64
+2. cmake -S 01_Codigo_Fuente\Motor_Grafico_EPE -B ...\build -G Ninja -DCMAKE_BUILD_TYPE=Release
+3. cmake --build ...\build
+4. build\EPE_TestHost.exe → fail=0
+
+que_hace
+Inicializa D3D12, abre MMF tipo 5, consume snapshot, pinta clear, throttle Present, recover, shutdown; Lab vtable; fábrica Core.
+
+que_no_hace
+No pinta velas/OHLC reales aún; no efectos A01–A22; no orquestador Lab completo; no IntegrationHost de app; no EA productor real.
+
+aval_documental
+Doc_1–Doc_6 (Doc_6 Motor_Grafico_Doc_6_Efectos_Graficos aprobado); arquitectura Lab/EPE/TestHost cerrada Langosto 2026-11-10.
+
+estado
+prueba_local fail=0 · pendiente adopción Langosto del árbol de código
